@@ -12,11 +12,12 @@
 
 from __future__ import print_function, absolute_import, division
 
+import errno
 import os
 from dataclasses import dataclass, field
 from threading import RLock
 
-from fuse import Operations
+from fuse import Operations, FuseOSError
 
 from . import fusepath
 from . import albuminfo
@@ -88,7 +89,7 @@ class TrackFSOps(Operations):
         # We don't want FlacTrackFS messing with actual data.
         # Only allow Read-Only access.
         if (flags & os.O_ACCMODE) != os.O_RDONLY:
-            raise ValueError('Can only open files read-only.')
+            raise FuseOSError(errno.EROFS)
         fp = self._fusepath(path)
         if fp.is_track:
             path = self.tracks.prepare_track(path, fp)
