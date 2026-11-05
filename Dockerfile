@@ -53,7 +53,7 @@ RUN chmod 666 /etc/passwd
 RUN \
   apk --no-cache add gcc python3-dev musl-dev linux-headers \
   && pip install psutil \
-  && pip install git+https://github.com/apomortsev/trackfs.git@develop --break-system-packages
+  && pip install git+https://github.com/apomortsev/trackfs.git --break-system-packages
 
 # Remove build kit
 RUN \
