@@ -47,7 +47,7 @@ RUN echo "user_allow_other" >> /etc/fuse.conf
 RUN chmod 666 /etc/passwd 
 
 # Ensure that we get a docker image cache invalidation when there's new content available
-# ADD https://api.github.com/repos/letwir/trackfs/compare/master...HEAD /dev/null
+ADD https://api.github.com/repos/apomortsev/trackfs/compare/main...HEAD /dev/null
 
 # Now install the latest trackfs version from pypi
 RUN \
