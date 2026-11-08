@@ -18,4 +18,4 @@ fi
 
 # start trackfs
 export FUSE_LIBRARY_PATH=/usr/lib/libfuse.so
-exec /usr/local/bin/trackfs $@
+exec /opt/venv/bin/trackfs $@

@@ -8,68 +8,75 @@
 # See https://github.com/andresch/trackfs for details.
 #
 # =================================
+# syntax=docker/dockerfile:1
 
-FROM docker.io/python:3.8-alpine AS builder
+# Build FLAC 1.5.0 separately so BuildKit can reuse its installed prefix.
+FROM docker.io/python:3.11-alpine AS flac-builder
 
-# build flac1.5.0
+ARG TARGETPLATFORM
+
 RUN \
   apk update \
-  && apk --no-cache add alpine-sdk git cmake doxygen pandoc \
-  && git clone https://github.com/xiph/flac.git -b 1.5.0 \
-  && cd flac \
-  && git clone https://github.com/xiph/ogg.git \
-  && echo -e "\ntarget_link_libraries(replaygain_analysis m)" >> src/share/replaygain_analysis/CMakeLists.txt \
-  && cmake . \
-  && make -j $(nproc) \
-  && make install \
-  && cd ../
+  && apk --no-cache add alpine-sdk git cmake doxygen pandoc
 
-# install dependencies  
 RUN \
-  apk --no-cache add fuse fuse-dev \
-  && /usr/local/bin/python -m pip install --upgrade pip
+    --mount=type=cache,id=flac-build-${TARGETPLATFORM},target=/tmp/flac-build,sharing=locked \
+    --mount=type=cache,id=flac-cache-${TARGETPLATFORM},target=/tmp/flac-cache,sharing=locked \
+    set -eux; \
+    mkdir -p /tmp/flac-prefix /tmp/flac-output; \
+    if [ ! -f /tmp/flac-cache/flac-1.5.0.tar.gz ]; then \
+      rm -rf /tmp/flac-prefix/*; \
+      if [ ! -d /tmp/flac-build/flac/.git ]; then \
+        rm -rf /tmp/flac-build/flac; \
+        git clone -b 1.5.0 https://github.com/xiph/flac.git /tmp/flac-build/flac; \
+      fi; \
+      cd /tmp/flac-build/flac; \
+      if [ ! -d ogg/.git ]; then git clone https://github.com/xiph/ogg.git ogg; fi; \
+      grep -q 'target_link_libraries(replaygain_analysis m)' src/share/replaygain_analysis/CMakeLists.txt \
+        || printf '\ntarget_link_libraries(replaygain_analysis m)\n' >> src/share/replaygain_analysis/CMakeLists.txt; \
+      cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/flac; \
+      cmake --build build -j "$(nproc)"; \
+      DESTDIR=/tmp/flac-prefix cmake --install build; \
+      make -C build clean; \
+      tar -C /tmp/flac-prefix -czf /tmp/flac-cache/flac-1.5.0.tar.gz usr/local; \
+    fi; \
+    tar -C /tmp/flac-prefix -xzf /tmp/flac-cache/flac-1.5.0.tar.gz; \
+    cp -a /tmp/flac-prefix/opt/flac/. /tmp/flac-output/
 
-# enable non-root users to make FUSE fs non-private
-RUN echo "user_allow_other" >> /etc/fuse.conf 
+# Install trackfs and Python dependencies in an isolated environment.
+FROM docker.io/python:3.11-alpine AS app-builder
 
-# FUSE requires that the user that mounts the FUSE filesystem
-# has an entry in /etc/passwd
-# Since we want to allow (and encourage) the usage of docker's
-# --user option to run the container as non-root user, 
-# and with that don't know the uid of the user at build time
-# we can't create the entry for that user at build time
-# and also can't use adduser command during runtime as this would
-# require root privileges.
-# Instead we open /etc/passwd for writing. 
-# As /ets/shadow is still protected this should not cause harm,
-# even if some attacker finds a way to take over the container
+RUN  apk add --no-cache gcc musl-dev linux-headers
 
-RUN chmod 666 /etc/passwd 
+WORKDIR /app
+COPY pyproject.toml setup.py VERSION README.py.md ./
+COPY trackfs ./trackfs
 
-# Ensure that we get a docker image cache invalidation when there's new content available
-ADD https://api.github.com/repos/apomortsev/trackfs/compare/main...HEAD /dev/null
-
-# Now install the latest trackfs version from pypi
 RUN \
-  apk --no-cache add gcc python3-dev musl-dev linux-headers \
-  && pip install psutil \
-  && pip install git+https://github.com/apomortsev/trackfs.git --break-system-packages
+    python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir .
 
-# Remove build kit
+# Runtime contains no compiler, Git, CMake, or documentation generators.
+FROM docker.io/python:3.11-alpine AS runtime
+ENV PATH="/opt/venv/bin:/opt/flac/bin:${PATH}"
+
 RUN \
-  apk del gcc python3-dev musl-dev linux-headers alpine-sdk git cmake doxygen pandoc
+  apk add --no-cache fuse libstdc++ libgcc \
+  && ln -sfn libfuse.so.2 /usr/lib/libfuse.so \
+  && echo "user_allow_other" >> /etc/fuse.conf \
+  && chmod 666 /etc/passwd
 
-# source directory containing flac+cue files
-VOLUME /src
+COPY --from=app-builder /opt/venv /opt/venv
+COPY --from=flac-builder /tmp/flac-output/ /opt/flac/
 
-# mount point where to generate the tracks from the flac+cue files
-VOLUME /dst
-
-COPY launcher.sh /usr/local/bin/
+COPY launcher.sh /usr/local/bin/launcher.sh
 RUN chmod 555 /usr/local/bin/launcher.sh
 
+# Source directory containing FLAC+CUE files.
+VOLUME /src
+
+# Mount point for the generated track files.
+VOLUME /dst
+
 ENTRYPOINT ["/usr/local/bin/launcher.sh"]
-
 CMD ["-t 256", "/src", "/dst"]
-
-
