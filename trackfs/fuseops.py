@@ -44,7 +44,7 @@ class TrackFSOps(Operations):
                  title_length=fusepath.DEFAULT_MAX_TITLE_LEN,
                  tags_ignored=albuminfo.DEFAULT_IGNORE_TAGS_REX
                  ):
-        self.root = os.path.realpath(root)
+        self.root = os.path.abspath(root)
         self.keep_flac = keep_album
         self.tracks = TrackManager()
         self._open_files = {}
@@ -58,7 +58,8 @@ class TrackFSOps(Operations):
         albuminfo.init(tags_ignored)
 
     def __call__(self, op, path, *args):
-        return super(TrackFSOps, self).__call__(op, self.root + path, *args)
+        source_path = os.path.join(self.root, path.lstrip(os.sep))
+        return super(TrackFSOps, self).__call__(op, source_path, *args)
 
     def _fusepath(self, path):
         return self._fusepath_factory.from_vpath(path)
@@ -67,7 +68,11 @@ class TrackFSOps(Operations):
         log.info(f"getattr for ({path}) [{fh}]")
         fp = self._fusepath(path)
         log.debug(fp)
-        st = os.lstat(fp.source)
+        source = fp.source
+        if os.path.islink(source) and os.path.isdir(source):
+            st = os.stat(source)
+        else:
+            st = os.lstat(source)
         result = dict((key, getattr(st, key)) for key in (
             'st_atime', 'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
             'st_nlink', 'st_size', 'st_uid'))
@@ -77,6 +82,10 @@ class TrackFSOps(Operations):
             # we need to adjust the file size to be roughly
             # appropriate for the individual track.
             result['st_size'] = self.tracks.estimate_track_file_size(path, fp)
+            # This is a workaround for a bug in FUSE that causes
+            # the file to be reported as non-existent if the link count is 0.
+            if result['st_nlink'] == 0:
+                result['st_nlink'] = 1            
 
         return result
 
@@ -131,7 +140,25 @@ class TrackFSOps(Operations):
     def readlink(self, path, *args, **pargs):
         log.info(f'readlink ({path})')
         path = self._fusepath(path).source
-        return os.readlink(path, *args, **pargs)
+        target = os.readlink(path, *args, **pargs)
+
+        if os.path.isabs(target):
+            resolved_target = os.path.abspath(target)
+            try:
+                is_in_root = any(
+                    os.path.commonpath((candidate_root, resolved_target)) == candidate_root
+                    for candidate_root in (
+                        os.path.abspath(self.root),
+                        os.path.realpath(self.root),
+                    )
+                )
+            except ValueError:
+                is_in_root = False
+
+            if is_in_root:
+                return os.path.relpath(resolved_target, os.path.dirname(path))
+
+        return target
 
     def statfs(self, path):
         log.info(f'statfs ({path})')

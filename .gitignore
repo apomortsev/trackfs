@@ -19,6 +19,6 @@ devcontainer-local/
 devcontainer-local.json
 
 *.tar
-*.tar.gz
+*.gz
 *.tgz
 *.zip

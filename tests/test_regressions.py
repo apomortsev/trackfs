@@ -1,11 +1,22 @@
 import os
+import sys
 import tempfile
+import types
 import unittest
 
 from trackfs.albuminfo import AlbumInfo
 from trackfs.cuesheet import Time, Track
 from trackfs.flactracks import TrackManager
 from trackfs.fusepath import Factory, FusePath
+try:
+    import fuse  # noqa: F401
+except EnvironmentError:
+    fuse_stub = types.ModuleType("fuse")
+    fuse_stub.Operations = type("Operations", (), {})
+    fuse_stub.FuseOSError = type("FuseOSError", (Exception,), {})
+    sys.modules["fuse"] = fuse_stub
+
+from trackfs.fuseops import TrackFSOps
 
 
 class TimeTests(unittest.TestCase):
@@ -52,6 +63,46 @@ class FusePathTests(unittest.TestCase):
         path = factory.from_vpath("album.flac.#-#.001.01.Title.Subtitle.flac")
         self.assertTrue(path.is_track)
         self.assertEqual(path.num, 1)
+
+class TrackFSOpsTests(unittest.TestCase):
+    def test_mount_root_symlink_is_not_dereferenced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "source") # /tmp/source
+            os.mkdir(source) # /tmp/source
+            mount_root_symlink = os.path.join(tmp, "src") # /tmp/src
+            os.symlink(source, mount_root_symlink) # /tmp/src -> /tmp/source
+
+            ops = TrackFSOps(mount_root_symlink)
+
+            # /tmp/src should be reported as the mount root, not /tmp/source.
+            self.assertEqual(ops.root, mount_root_symlink)
+
+    def test_root_directory_symlink_is_reported_as_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "source") # /tmp/source
+            os.mkdir(source) # /tmp/source
+            mount_root = os.path.join(tmp, "link") # /tmp/link
+            os.symlink(source, mount_root, target_is_directory=True) # /tmp/link -> /tmp/source/src
+
+            ops = TrackFSOps(mount_root) # /tmp/llink
+            result = ops.getattr(mount_root)
+
+            # /tmp/link should be reported as a directory.
+            self.assertTrue(os.path.isdir(mount_root))
+            self.assertTrue(result["st_mode"] & 0o170000 == 0o040000)
+
+    def test_absolute_source_symlink_is_relative_to_fuse_mount(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mount_root = os.path.join(tmp, "src") # /tmp/src
+            os.mkdir(mount_root) # /tmp/src
+            album = os.path.join(mount_root, "album.flac") # /tmp/src/album.flac
+            open(album, "wb").close()
+            link = os.path.join(mount_root, "link.flac") # /tmp/src/link.flac
+            os.symlink(album, link) # /tmp/src/link.flac -> /tmp/src/album.flac
+
+            ops = TrackFSOps(mount_root)
+
+            self.assertEqual(ops.readlink(link), "album.flac")
 
 class TrackManagerTests(unittest.TestCase):
     def test_next_track_uses_position_not_track_number_as_index(self):

@@ -207,9 +207,9 @@ class TrackManager:
         #  論理コアをpsutilで取得して使っている。
         flac_cmd = (
             f'flac -dscF --skip={track.start.flac_time()}'
-            f'  --until={track.end.flac_time()} "{fp.source}" '
-            f'| flac -sf0j {cpu_cores}'
-            f'  {self.track_tags_as_flac_args(album_info,fp.num)}{picture_arg} -o {track_file} -'
+            f' --until={track.end.flac_time()} "{fp.source}" | '
+            f'flac -sf0j {cpu_cores}'
+            f' {self.track_tags_as_flac_args(album_info,fp.num)}{picture_arg} -o {track_file} -'
         )
         log.debug(f'extracting track with command: "{flac_cmd}"')
         rc = run(flac_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
@@ -261,7 +261,7 @@ class TrackManager:
 
         flac_cmd = (
             f'flac -sf0j {cpu_cores}'
-            f'  {self.track_tags_as_flac_args(album_info, fp.num)}{picture_arg} -o "{track_file}" "{wave_track_file}"'
+            f' {self.track_tags_as_flac_args(album_info, fp.num)}{picture_arg} -o "{track_file}" "{wave_track_file}"'
         )
         log.debug(f'extracting track with command: "{flac_cmd}"')
         rc = run(flac_cmd, shell=True, stdout=None, stderr=DEVNULL).returncode
