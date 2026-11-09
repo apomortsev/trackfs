@@ -24,7 +24,7 @@ RUN \
     --mount=type=cache,id=flac-cache-${TARGETPLATFORM},target=/tmp/flac-cache,sharing=locked \
     set -eux; \
     mkdir -p /tmp/flac-prefix /tmp/flac-output; \
-    if [ ! -f /tmp/flac-cache/flac-1.5.0.tar.gz ]; then \
+    if [ ! -f /tmp/flac-cache/flac-1.5.0-runtime.tar.gz ]; then \
       rm -rf /tmp/flac-prefix/*; \
       if [ ! -d /tmp/flac-build/flac/.git ]; then \
         rm -rf /tmp/flac-build/flac; \
@@ -38,10 +38,11 @@ RUN \
       cmake --build build -j "$(nproc)"; \
       DESTDIR=/tmp/flac-prefix cmake --install build; \
       make -C build clean; \
-      tar -C /tmp/flac-prefix -czf /tmp/flac-cache/flac-1.5.0.tar.gz opt/flac; \
+      tar -C /tmp/flac-prefix -czf /tmp/flac-cache/flac-1.5.0-runtime.tar.gz opt/flac; \
     fi; \
-    tar -C /tmp/flac-prefix -xzf /tmp/flac-cache/flac-1.5.0.tar.gz; \
-    cp -a /tmp/flac-prefix/opt/flac/* /tmp/flac-output/
+    tar -C /tmp/flac-prefix -xzf /tmp/flac-cache/flac-1.5.0-runtime.tar.gz; \
+    mkdir -p /tmp/flac-output/bin; \
+    cp -a /tmp/flac-prefix/opt/flac/bin/. /tmp/flac-output/bin/
 
 # Install trackfs and Python dependencies in an isolated environment.
 FROM docker.io/python:3.11-alpine AS app-builder
@@ -54,14 +55,28 @@ COPY trackfs ./trackfs
 
 RUN \
     python -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir .
+    && /opt/venv/bin/pip install --no-cache-dir . \
+    && /opt/venv/bin/pip uninstall -y pip setuptools \
+    && rm -f \
+      /opt/venv/bin/Activate.ps1 \
+      /opt/venv/bin/activate \
+      /opt/venv/bin/activate.csh \
+      /opt/venv/bin/activate.fish \
+      /opt/venv/bin/chardetect \
+      /opt/venv/bin/mid3cp \
+      /opt/venv/bin/mid3iconv \
+      /opt/venv/bin/mid3v2 \
+      /opt/venv/bin/moggsplit \
+      /opt/venv/bin/mutagen-inspect \
+      /opt/venv/bin/mutagen-pony \
+    && rm -rf /opt/venv/include /opt/venv/share
 
 # Runtime contains no compiler, Git, CMake, or documentation generators.
 FROM docker.io/python:3.11-alpine AS runtime
 ENV PATH="/opt/venv/bin:/opt/flac/bin:${PATH}"
 
 RUN \
-  apk add --no-cache fuse libstdc++ libgcc \
+  apk add --no-cache fuse \
   && ln -sfn libfuse.so.2 /usr/lib/libfuse.so \
   && echo "user_allow_other" >> /etc/fuse.conf \
   && chmod 666 /etc/passwd
