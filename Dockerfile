@@ -38,10 +38,10 @@ RUN \
       cmake --build build -j "$(nproc)"; \
       DESTDIR=/tmp/flac-prefix cmake --install build; \
       make -C build clean; \
-      tar -C /tmp/flac-prefix -czf /tmp/flac-cache/flac-1.5.0.tar.gz usr/local; \
+      tar -C /tmp/flac-prefix -czf /tmp/flac-cache/flac-1.5.0.tar.gz opt/flac; \
     fi; \
     tar -C /tmp/flac-prefix -xzf /tmp/flac-cache/flac-1.5.0.tar.gz; \
-    cp -a /tmp/flac-prefix/opt/flac/. /tmp/flac-output/
+    cp -a /tmp/flac-prefix/opt/flac/* /tmp/flac-output/
 
 # Install trackfs and Python dependencies in an isolated environment.
 FROM docker.io/python:3.11-alpine AS app-builder

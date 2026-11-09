@@ -14,7 +14,7 @@ import wave
 import psutil
 
 from dataclasses import dataclass, field
-from math import trunc
+from math import ceil, trunc
 from tempfile import mkstemp
 from subprocess import DEVNULL, run
 from concurrent.futures import ThreadPoolExecutor
@@ -54,7 +54,7 @@ class TrackManager:
 
     """
 
-    DEFAULT_TEMP_FILE_TTL = 60
+    DEFAULT_TEMP_FILE_TTL = 600
     # We should keep the lead time big enough, as the calculation of the
     # remaining track time is based on percentage of file-size
     DEFAULT_PRELOAD_LEAD_TIME = DEFAULT_TEMP_FILE_TTL // 2
@@ -67,9 +67,10 @@ class TrackManager:
         self.preload_lead_time: int = TrackManager.DEFAULT_PRELOAD_LEAD_TIME
         self.temp_file_ttl: int = TrackManager.DEFAULT_TEMP_FILE_TTL
 
-    def _add(self, key: os.PathLike, track_file: os.PathLike) -> None:
+    def _add(self, key: os.PathLike, track_file: os.PathLike, duration: float) -> None:
         with self.rwlock:
             self.registry[key] = TrackInfo(track_file)
+            self.temp_file_ttl = max(self.temp_file_ttl, ceil(duration * 2))
 
         def cleanup():
             still_in_use = True
@@ -222,7 +223,7 @@ class TrackManager:
                 del self[path]
                 raise FlacSplitException(err_msg)
             else:
-                self._add(path, track_file)
+                self._add(path, track_file, track.duration.seconds())
 
         return track_file
 
@@ -273,7 +274,7 @@ class TrackManager:
                 del self[path]
                 raise FlacSplitException(err_msg)
             else:
-                self._add(path, track_file)
+                self._add(path, track_file, track.duration.seconds())
 
         return track_file
 
