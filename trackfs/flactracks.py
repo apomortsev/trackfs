@@ -308,7 +308,7 @@ class TrackManager:
     def release_track(self, path: os.PathLike, fp: FusePath):
         log.info(f'release track "{path}"')
         assert fp.is_track
-        if self._change_usage(path, -1).ref_count == 0:
+        if self._is_registered(path) and self._change_usage(path, -1).ref_count == 0:
             log.debug(f'check fo preloaded next track of "{path}"')
             with self.rwlock:
                 next_track = self.preloaded_next_tracks.get(path, None)
