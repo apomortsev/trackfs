@@ -38,6 +38,7 @@ class FlacSplitException(Exception):
 @dataclass(frozen=True)
 class TrackInfo:
     temp_file_path: os.PathLike
+    duration: float
     ref_count: int = 1
     last_accessed: float = field(default_factory=time.time)
 
@@ -54,24 +55,15 @@ class TrackManager:
 
     """
 
-    DEFAULT_TEMP_FILE_TTL = 600
-    # We should keep the lead time big enough, as the calculation of the
-    # remaining track time is based on percentage of file-size
-    DEFAULT_PRELOAD_LEAD_TIME = DEFAULT_TEMP_FILE_TTL // 2
-
     def __init__(self) -> None:
         self.rwlock: RLock = RLock()
         self.registry: Dict[os.PathLike, TrackInfo or None] = {}
         self.preload_pool: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="preload")
         self.preloaded_next_tracks: Dict[os.PathLike, FusePath] = {}
-        self.preload_lead_time: int = TrackManager.DEFAULT_PRELOAD_LEAD_TIME
-        self.temp_file_ttl: int = TrackManager.DEFAULT_TEMP_FILE_TTL
 
     def _add(self, key: os.PathLike, track_file: os.PathLike, duration: float) -> None:
         with self.rwlock:
-            self.registry[key] = TrackInfo(track_file)
-            self.temp_file_ttl = max(self.temp_file_ttl, ceil(duration * 2))
-
+            self.registry[key] = TrackInfo(track_file, duration)
         def cleanup():
             still_in_use = True
             while still_in_use:
@@ -79,10 +71,10 @@ class TrackManager:
                     info = self.registry.get(key)
                 if info is None:
                     return
-                if info.ref_count <= 0 and (time.time() - info.last_accessed > self.temp_file_ttl):
+                if info.ref_count <= 0 and (time.time() - info.last_accessed > 2 * info.duration):
                     still_in_use = False
                 else:
-                    time.sleep(self.temp_file_ttl / 2)
+                    time.sleep(info.duration / 2)
             log.debug(f'delete track "{key}"')
             with self.rwlock:
                 self.registry.pop(key, None)
@@ -117,7 +109,7 @@ class TrackManager:
     def _change_usage(self, key: os.PathLike, delta: int) -> TrackInfo:
         with self.rwlock:
             info = self.registry[key]
-            info = TrackInfo(info.temp_file_path, info.ref_count + delta, time.time())
+            info = TrackInfo(info.temp_file_path, info.duration, info.ref_count + delta, time.time())
             self.registry[key] = info
         return info
 
@@ -343,8 +335,8 @@ class TrackManager:
         if track is None or file_size <= 0:
             return
         remaining_seconds = (1.0 - (float(offset) / float(file_size))) * track.duration.seconds()
-        if remaining_seconds > self.preload_lead_time:
-            log.debug(f'more than ~{self.preload_lead_time} seconds to play; no preload')
+        if remaining_seconds > track.duration.seconds() / 2:
+            log.debug(f'more than ~{track.duration.seconds() / 2} seconds to play; no preload')
             return
 
         with self.rwlock:
