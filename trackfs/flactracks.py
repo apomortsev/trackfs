@@ -378,7 +378,9 @@ class TrackManager:
             if track is None or not meta.info.length:
                 return os.stat(fp.source).st_size
             duration_ratio = (track.end - track.start).seconds() / meta.info.length
-            return max(1, int(os.stat(fp.source).st_size * duration_ratio))
+            # give a leeway of 25% to prevent some players relying on the stat file size
+            # from ending playback preamaturely if we underestimate the yet unextracted file size.
+            return max(1, int(os.stat(fp.source).st_size * duration_ratio * 1.25))
         else:
             # use the actual size of the track-file
             return os.stat(track_info.temp_file_path).st_size
