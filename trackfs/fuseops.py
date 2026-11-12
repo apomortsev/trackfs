@@ -103,7 +103,11 @@ class TrackFSOps(Operations):
         if fp.is_track:
             path = self.tracks.prepare_track(path, fp)
         log.debug(f'file to open = "{path}"')
-        fh = os.open(path, flags, *args, **pargs)
+        try:
+            fh = os.open(path, flags, *args, **pargs)
+        except OSError as e:
+            self.tracks.release_track(path, fp)
+            raise FuseOSError(e.errno)
         self._open_files[fh] = OpenFileInfo()
         log.debug(f'opened file file to open = "{path}" with fh [{fh}]')
         return fh
