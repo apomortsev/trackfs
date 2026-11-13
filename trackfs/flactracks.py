@@ -43,6 +43,13 @@ class TrackInfo:
     last_accessed: float = field(default_factory=time.time)
 
 
+@dataclass
+class PreloadedTrack:
+    fp: FusePath
+    prepared: bool = False
+    released: bool = False
+
+
 class TrackManager:
     """Keeps track of all individual tracks that currently get processed
 
@@ -59,7 +66,7 @@ class TrackManager:
         self.rwlock: RLock = RLock()
         self.registry: Dict[os.PathLike, TrackInfo or None] = {}
         self.preload_pool: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="preload")
-        self.preloaded_next_tracks: Dict[os.PathLike, FusePath] = {}
+        self.preloaded_next_tracks: Dict[os.PathLike, PreloadedTrack] = {}
 
     def _add(self, key: os.PathLike, track_file: os.PathLike, duration: float) -> None:
         with self.rwlock:
@@ -300,14 +307,19 @@ class TrackManager:
     def release_track(self, path: os.PathLike, fp: FusePath):
         log.info(f'release track "{path}"')
         assert fp.is_track
+        next_track_to_release = None
         if self._is_registered(path) and self._change_usage(path, -1).ref_count == 0:
             log.debug(f'check fo preloaded next track of "{path}"')
             with self.rwlock:
-                next_track = self.preloaded_next_tracks.get(path, None)
-                if next_track is not None:
-                    log.debug(f'release preloaded next track of "{next_track.vpath}"')
-                    self.release_track(next_track.vpath, next_track)
-                    del self.preloaded_next_tracks[path]
+                preloaded = self.preloaded_next_tracks.get(path)
+                if preloaded is not None:
+                    preloaded.released = True
+                    if preloaded.prepared:
+                        next_track_to_release = preloaded.fp
+                        del self.preloaded_next_tracks[path]
+        if next_track_to_release is not None:
+            log.debug(f'release preloaded next track of "{next_track_to_release.vpath}"')
+            self.release_track(next_track_to_release.vpath, next_track_to_release)
 
     @staticmethod
     def _find_this_and_next_track(album_info: albuminfo.AlbumInfo, num: int) -> Tuple[Track or None, Track or None]:
@@ -340,6 +352,9 @@ class TrackManager:
             return
 
         with self.rwlock:
+            parent_info = self.registry.get(path)
+            if not isinstance(parent_info, TrackInfo) or parent_info.ref_count <= 0:
+                return
             if self.preloaded_next_tracks.get(path, None) is not None:
                 log.debug(f'next track of "{path}" got preloaded in the meanwhile')
                 return
@@ -349,11 +364,33 @@ class TrackManager:
             next_fp = fp.for_other_track(
                 next_track.num, next_track.title, next_track.start, next_track.end,
             )
-            self.preloaded_next_tracks[path] = next_fp
+            preloaded = PreloadedTrack(next_fp)
+            self.preloaded_next_tracks[path] = preloaded
 
         # prepare next track and by that add a reference to it to keep it it cache
         # for the lifetime if this track.
-        self.prepare_track(next_fp.vpath, next_fp)
+        try:
+            self.prepare_track(next_fp.vpath, next_fp)
+        except Exception:
+            with self.rwlock:
+                if self.preloaded_next_tracks.get(path) is preloaded:
+                    del self.preloaded_next_tracks[path]
+            raise
+
+        release_preload = False
+        with self.rwlock:
+            if self.preloaded_next_tracks.get(path) is preloaded:
+                parent_info = self.registry.get(path)
+                if preloaded.released and (
+                    not isinstance(parent_info, TrackInfo) or parent_info.ref_count <= 0
+                ):
+                    del self.preloaded_next_tracks[path]
+                    release_preload = True
+                else:
+                    preloaded.prepared = True
+                    preloaded.released = False
+        if release_preload:
+            self.release_track(next_fp.vpath, next_fp)
 
     def check_next_track(self, path: os.PathLike, fp: FusePath, offset: int) -> None:
         assert fp.is_track
